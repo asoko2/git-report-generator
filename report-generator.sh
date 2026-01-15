@@ -5,6 +5,14 @@
 # Generates work reports from git commits with customizable templates
 # ============================================================================
 
+# Help Menu
+if [ "$1" == "-h" ]; then
+  echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date]"
+  echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30"
+  echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30 2024-08-31"
+  exit 1
+fi
+
 # Usage validation
 if [ "$#" -lt 3 ]; then
   echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date]"
