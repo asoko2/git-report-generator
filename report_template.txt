@@ -1,0 +1,14 @@
+Hi {{USERNAME}},
+
+This is your git report.
+
+Below is your task update for {{DATE_RANGE}}.
+
+Project: {{PROJECT_NAME}}
+
+{{COMMITS}}
+
+Thank you
+Regards,
+
+Git Auto Report
