@@ -1,4 +1,4 @@
-### bash - UNIX-based system (Linux, MacOS)
+## bash - UNIX-based system (Linux, MacOS)
 `Open help menu : `
 `./report-generator.sh -h`
 
@@ -14,7 +14,9 @@
 
 **Note** : Date format in `YYYY-MM-DD`
 
-### Windows Powershell
+---
+
+## Windows Powershell
 `Open help menu : `
 `Get-Help .\report-generator.ps1`
 
