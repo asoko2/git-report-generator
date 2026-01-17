@@ -7,17 +7,19 @@
 
 # Help Menu
 if [ "$1" == "-h" ]; then
-  echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date]"
+  echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date] [--csv]"
   echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30"
   echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30 2024-08-31"
+  echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30 2024-08-31 --csv"
   exit 1
 fi
 
 # Usage validation
 if [ "$#" -lt 3 ]; then
-  echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date]"
+  echo "Usage: ./report-generator.sh <project_directory> <username> <from_date> [to_date] [--csv]"
   echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30"
   echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30 2024-08-31"
+  echo "Example: ./report-generator.sh /path/to/repo john.doe 2024-08-30 2024-08-31 --csv"
   exit 1
 fi
 
@@ -25,7 +27,19 @@ fi
 PROJECT_DIR=$1
 USERNAME=$2
 FROM_DATE=$3
-TO_DATE=${4:-$FROM_DATE}
+TO_DATE=$4
+CSV_MODE=false
+
+# Check if last argument is --csv or if TO_DATE is --csv
+if [ "$TO_DATE" = "--csv" ]; then
+  CSV_MODE=true
+  TO_DATE=$FROM_DATE
+elif [ "$5" = "--csv" ]; then
+  CSV_MODE=true
+fi
+
+# Set TO_DATE to FROM_DATE if not provided
+[ -z "$TO_DATE" ] && TO_DATE=$FROM_DATE
 
 # Validate project directory exists
 if [ ! -d "$PROJECT_DIR" ]; then
@@ -45,7 +59,7 @@ if ! [[ "$FROM_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 1
 fi
 
-if [ -n "$TO_DATE" ] && ! [[ "$TO_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+if [ -n "$TO_DATE" ] && [ "$TO_DATE" != "--csv" ] && ! [[ "$TO_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "Error: Invalid date format for TO_DATE. Use YYYY-MM-DD"
   exit 1
 fi
@@ -54,13 +68,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_FILE="${SCRIPT_DIR}/report_template.txt"
 
-# Load template from file
-if [ -f "$TEMPLATE_FILE" ]; then
-  TEMPLATE=$(cat "$TEMPLATE_FILE")
-else
-  echo "Error: Template file not found at $TEMPLATE_FILE"
-  echo "Please ensure 'report_template.txt' exists in the same directory as this script"
-  exit 1
+# Load template from file (skip for CSV mode)
+if [ "$CSV_MODE" = false ]; then
+  if [ -f "$TEMPLATE_FILE" ]; then
+    TEMPLATE=$(cat "$TEMPLATE_FILE")
+  else
+    echo "Error: Template file not found at $TEMPLATE_FILE"
+    echo "Please ensure 'report_template.txt' exists in the same directory as this script"
+    exit 1
+  fi
 fi
 
 # Define time range
@@ -80,11 +96,19 @@ if [ ! -d "$OUTPUT_DIR" ]; then
 fi
 
 # Generate dynamic filename in project-specific directory
-REPORT_FILE="${OUTPUT_DIR}/report_${USERNAME}_${FROM_DATE}"
-if [ "$FROM_DATE" != "$TO_DATE" ]; then
-  REPORT_FILE="${REPORT_FILE}_to_${TO_DATE}"
+if [ "$CSV_MODE" = true ]; then
+  REPORT_FILE="${OUTPUT_DIR}/report_${USERNAME}_${PROJECT_NAME}_${FROM_DATE}"
+  if [ "$FROM_DATE" != "$TO_DATE" ]; then
+    REPORT_FILE="${REPORT_FILE}_to_${TO_DATE}"
+  fi
+  REPORT_FILE="${REPORT_FILE}.csv"
+else
+  REPORT_FILE="${OUTPUT_DIR}/report_${USERNAME}_${PROJECT_NAME}_${FROM_DATE}"
+  if [ "$FROM_DATE" != "$TO_DATE" ]; then
+    REPORT_FILE="${REPORT_FILE}_to_${TO_DATE}"
+  fi
+  REPORT_FILE="${REPORT_FILE}.txt"
 fi
-REPORT_FILE="${REPORT_FILE}.txt"
 
 # Format date range for display
 if [ "$FROM_DATE" == "$TO_DATE" ]; then
@@ -109,43 +133,79 @@ fi
 if [ -n "$COMMITS_WITH_DETAILS" ]; then
   MATCHED_AUTHORS=$(echo "$COMMITS_WITH_DETAILS" | cut -d'|' -f1 | sort -u | tr '\n' ', ' | sed 's/, $//')
 
+  # Count total commits
+  TOTAL_COMMITS=$(echo "$COMMITS_WITH_DETAILS" | wc -l | tr -d ' ')
+
   # ============================================================================
-  # TABLE FORMATTING - Dynamic column widths with commit message wrapping
+  # CSV MODE - Simple CSV output
   # ============================================================================
+  if [ "$CSV_MODE" = true ]; then
+    # CSV Header
+    COMMITS="No,Commit,Author,Commit Date,Hash"
 
-  # Set maximum width for commit column (wrapping threshold)
-  MAX_COMMIT_WIDTH=50
+    # CSV Data rows - escape quotes and handle commas
+    echo "$COMMITS_WITH_DETAILS" | awk -F'|' 'BEGIN {OFS=","} {
+      no = NR
+      commit = $2
+      author = $1
+      date = $3
+      hash = $4
+      
+      # Escape double quotes by doubling them
+      gsub(/"/, "\"\"", commit)
+      gsub(/"/, "\"\"", author)
+      
+      # Wrap in quotes if contains comma, quote, or newline
+      if (commit ~ /[,"\n]/) {
+        commit = "\"" commit "\""
+      }
+      if (author ~ /[,"\n]/) {
+        author = "\"" author "\""
+      }
+      
+      print no, commit, author, date, hash
+    }' >>"$REPORT_FILE.tmp"
 
-  # Prepare data with row numbers (now includes hash as 5th field)
-  TEMP_DATA=$(echo "$COMMITS_WITH_DETAILS" | awk -F'|' '{print NR"|"$2"|"$1"|"$3"|"$4}')
+    # Combine header and data
+    echo "$COMMITS" >"$REPORT_FILE"
+    cat "$REPORT_FILE.tmp" >>"$REPORT_FILE"
+    rm "$REPORT_FILE.tmp"
 
-  # Count total commits before any wrapping
-  TOTAL_COMMITS=$(echo "$TEMP_DATA" | wc -l | tr -d ' ')
+  else
+    # ============================================================================
+    # TABLE FORMATTING - Dynamic column widths with commit message wrapping
+    # ============================================================================
 
-  # Calculate maximum width for each column
-  MAX_NO=$(echo "$TEMP_DATA" | awk -F'|' '{print length($1)}' | sort -rn | head -1)
-  MAX_AUTHOR=$(echo "$TEMP_DATA" | awk -F'|' '{print length($3)}' | sort -rn | head -1)
-  MAX_DATE=10 # Fixed width for dates (YYYY-MM-DD)
-  MAX_HASH=7  # Fixed width for commit hash
+    # Set maximum width for commit column (wrapping threshold)
+    MAX_COMMIT_WIDTH=50
 
-  # Ensure minimum widths including headers
-  [ "$MAX_NO" -lt 2 ] && MAX_NO=2
-  [ "$MAX_AUTHOR" -lt 6 ] && MAX_AUTHOR=6
+    # Prepare data with row numbers (now includes hash as 5th field)
+    TEMP_DATA=$(echo "$COMMITS_WITH_DETAILS" | awk -F'|' '{print NR"|"$2"|"$1"|"$3"|"$4}')
 
-  # Use fixed max width for commit column
-  MAX_COMMIT=$MAX_COMMIT_WIDTH
+    # Calculate maximum width for each column
+    MAX_NO=$(echo "$TEMP_DATA" | awk -F'|' '{print length($1)}' | sort -rn | head -1)
+    MAX_AUTHOR=$(echo "$TEMP_DATA" | awk -F'|' '{print length($3)}' | sort -rn | head -1)
+    MAX_DATE=10 # Fixed width for dates (YYYY-MM-DD)
+    MAX_HASH=7  # Fixed width for commit hash
 
-  # Build the table
-  COMMITS=""
+    # Ensure minimum widths including headers
+    [ "$MAX_NO" -lt 2 ] && MAX_NO=2
+    [ "$MAX_AUTHOR" -lt 6 ] && MAX_AUTHOR=6
 
-  # Header row
-  COMMITS+="| $(printf "%-${MAX_NO}s" "No") | $(printf "%-${MAX_COMMIT}s" "Commit") | $(printf "%-${MAX_AUTHOR}s" "Author") | $(printf "%-${MAX_DATE}s" "Commit Date") | $(printf "%-${MAX_HASH}s" "Hash") |"$'\n'
+    # Use fixed max width for commit column
+    MAX_COMMIT=$MAX_COMMIT_WIDTH
 
-  # Separator line
-  COMMITS+="| $(printf '%*s' $MAX_NO '' | tr ' ' '-') | $(printf '%*s' $MAX_COMMIT '' | tr ' ' '-') | $(printf '%*s' $MAX_AUTHOR '' | tr ' ' '-') | $(printf '%*s' $MAX_DATE '' | tr ' ' '-') | $(printf '%*s' $MAX_HASH '' | tr ' ' '-') |"$'\n'
+    # Build the table
+    COMMITS=""
 
-  # Data rows with text wrapping using awk for better handling
-  COMMITS+=$(echo "$TEMP_DATA" | awk -F'|' -v max_no="$MAX_NO" -v max_commit="$MAX_COMMIT" -v max_author="$MAX_AUTHOR" -v max_date="$MAX_DATE" -v max_hash="$MAX_HASH" '
+    # Header row
+    COMMITS+="| $(printf "%-${MAX_NO}s" "No") | $(printf "%-${MAX_COMMIT}s" "Commit") | $(printf "%-${MAX_AUTHOR}s" "Author") | $(printf "%-${MAX_DATE}s" "Commit Date") | $(printf "%-${MAX_HASH}s" "Hash") |"$'\n'
+
+    # Separator line
+    COMMITS+="| $(printf '%*s' $MAX_NO '' | tr ' ' '-') | $(printf '%*s' $MAX_COMMIT '' | tr ' ' '-') | $(printf '%*s' $MAX_AUTHOR '' | tr ' ' '-') | $(printf '%*s' $MAX_DATE '' | tr ' ' '-') | $(printf '%*s' $MAX_HASH '' | tr ' ' '-') |"$'\n'
+
+    # Data rows with text wrapping using awk for better handling
+    COMMITS+=$(echo "$TEMP_DATA" | awk -F'|' -v max_no="$MAX_NO" -v max_commit="$MAX_COMMIT" -v max_author="$MAX_AUTHOR" -v max_date="$MAX_DATE" -v max_hash="$MAX_HASH" '
     function wrap_line(text, width, lines) {
         delete lines
         if (length(text) <= width) {
@@ -193,6 +253,18 @@ if [ -n "$COMMITS_WITH_DETAILS" ]; then
     }
     ')
 
+    # Replace placeholders in template
+    REPORT_CONTENT="${TEMPLATE//\{\{USERNAME\}\}/$USERNAME}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{PROJECT_NAME\}\}/$PROJECT_NAME}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{DATE_RANGE\}\}/$DATE_RANGE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{FROM_DATE\}\}/$FROM_DATE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{TO_DATE\}\}/$TO_DATE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{COMMITS\}\}/$COMMITS}"
+
+    # Write report to file using printf to preserve formatting
+    printf "%s" "$REPORT_CONTENT" >"$REPORT_FILE"
+  fi
+
 else
   MATCHED_AUTHORS=""
   COMMITS=""
@@ -200,7 +272,7 @@ else
 fi
 
 # Handle no commits found
-if [ -z "$COMMITS" ]; then
+if [ -z "$COMMITS" ] || [ "$TOTAL_COMMITS" -eq 0 ]; then
   echo "Warning: No commits found for author matching '$USERNAME' in '$PROJECT_DIR' between $FROM_DATE and $TO_DATE"
   echo ""
   echo "Searching for possible author names in the repository..."
@@ -221,23 +293,22 @@ if [ -z "$COMMITS" ]; then
     git -C "$PROJECT_DIR" log --all --pretty=format:"%an" | sort -u
   fi
 
-  COMMITS="No commits found for this period."
+  if [ "$CSV_MODE" = true ]; then
+    echo "No,Commit,Author,Commit Date,Hash" >"$REPORT_FILE"
+  else
+    COMMITS="No commits found for this period."
+    REPORT_CONTENT="${TEMPLATE//\{\{USERNAME\}\}/$USERNAME}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{PROJECT_NAME\}\}/$PROJECT_NAME}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{DATE_RANGE\}\}/$DATE_RANGE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{FROM_DATE\}\}/$FROM_DATE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{TO_DATE\}\}/$TO_DATE}"
+    REPORT_CONTENT="${REPORT_CONTENT//\{\{COMMITS\}\}/$COMMITS}"
+    printf "%s" "$REPORT_CONTENT" >"$REPORT_FILE"
+  fi
   TOTAL_COMMITS=0
 fi
 
-# Replace placeholders in template
-REPORT_CONTENT="${TEMPLATE//\{\{USERNAME\}\}/$USERNAME}"
-REPORT_CONTENT="${REPORT_CONTENT//\{\{PROJECT_NAME\}\}/$PROJECT_NAME}"
-REPORT_CONTENT="${REPORT_CONTENT//\{\{DATE_RANGE\}\}/$DATE_RANGE}"
-REPORT_CONTENT="${REPORT_CONTENT//\{\{FROM_DATE\}\}/$FROM_DATE}"
-REPORT_CONTENT="${REPORT_CONTENT//\{\{TO_DATE\}\}/$TO_DATE}"
-REPORT_CONTENT="${REPORT_CONTENT//\{\{COMMITS\}\}/$COMMITS}"
-
-# Write report to file using printf to preserve formatting
-printf "%s" "$REPORT_CONTENT" >"$REPORT_FILE"
-
 # Display success message with summary
-# Use the pre-counted total from before wrapping
 COMMIT_COUNT=$TOTAL_COMMITS
 
 echo ""
